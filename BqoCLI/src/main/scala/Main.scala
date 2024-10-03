@@ -270,11 +270,18 @@ object Invoice {
    * Get all invoice IDs associated with a particular customer ID.
    * Helper function.
    */
-  def invoicesByCustomerId(customerId: Int): Set[Int] = Invoice
-    .query(
-      s"select Id, DocNumber from Invoice where CustomerRef = '${customerId}'"
-    )
-    .map(_.obj("Id").str.toInt).toSet
+  def invoicesByCustomerId(customerId: Int, onlyOpen: Boolean): Set[Int] = {
+    val conds =
+      Seq(s"CustomerRef = '${customerId}'") ++ (if (onlyOpen)
+                                                  Seq(s"Balance != '0'")
+                                                else Seq.empty)
+    Invoice
+      .query(
+        "select Id, DocNumber from Invoice where " + conds.mkString(" and ")
+      )
+      .map(_.obj("Id").str.toInt)
+      .toSet
+  }
 }
 
 /**
