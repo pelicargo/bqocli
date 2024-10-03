@@ -182,30 +182,31 @@ case class Invoice(
 
 object Invoice {
 
+  def fromRawJson(json: ujson.Value): Either[String, Invoice] = {
+    json.obj
+      .get("Invoice")
+      .toRight(s"Invoice.read: malformed structure ${json}")
+      .map(_.asInstanceOf[ujson.Obj])
+      .map(fromJsonDict)
+  }
+
+  def fromJsonDict(json: ujson.Obj): Invoice = Invoice(
+    rawJson = Some(json),
+    id = json("Id").str.toInt,
+    docNumber = json("DocNumber").str,
+    dueDate = json("DueDate").str,
+    balance = BigDecimal(json("Balance").num),
+    totalAmt = BigDecimal(json("TotalAmt").num),
+    customerRefRaw = json("CustomerRef"),
+  )
+
   /**
    * Read an invoice.
    */
   def read(invoiceId: Int): Either[String, Invoice] = {
     Requests
-      .getJson(
-        s"/v3/company/${REALM_ID}/invoice/${invoiceId}?minorversion=73",
-      )
-      .flatMap(j =>
-        j.obj
-          .get("Invoice")
-          .toRight(s"Invoice.read: malformed structure ${j}")
-      )
-      .map { json =>
-        Invoice(
-          rawJson = Some(json),
-          id = json("Id").str.toInt,
-          docNumber = json("DocNumber").str,
-          dueDate = json("DueDate").str,
-          balance = BigDecimal(json("Balance").num),
-          totalAmt = BigDecimal(json("TotalAmt").num),
-          customerRefRaw = json("CustomerRef"),
-        )
-      }
+      .getJson(s"/v3/company/${REALM_ID}/invoice/${invoiceId}?minorversion=73")
+      .flatMap(fromRawJson)
   }
 
   /**
@@ -221,6 +222,27 @@ object Invoice {
     r.map(
       os.write.over(os.Path(savePath), _)
     )
+  }
+
+  /**
+   * Send an invoice.
+   */
+  def send(
+      invoiceId: Int,
+      emailAddr: Option[String] = None
+  ): Either[String, Invoice] = {
+    val request = Requests
+      .rawPost(
+        s"/v3/company/${REALM_ID}/invoice/${invoiceId}/send?minorversion=73" + emailAddr
+          .map("&sendTo=" + _)
+          .getOrElse("")
+      )
+      .auth
+      .bearer(AccessToken())
+    val response = request.send(Requests.backend) match {
+      case scala.util.Success(x) => x
+    }
+    fromRawJson(ujson.read(response.body))
   }
 }
 
