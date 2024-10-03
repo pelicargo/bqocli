@@ -64,6 +64,7 @@ object AccessToken {
     }
 
     if (response.code == StatusCode.Ok) {
+      // Store the new tokens
       val newAccessToken = ujson.read(response.body)("access_token").str.trim
       val newRefreshToken = ujson.read(response.body)("refresh_token").str.trim
       os.write.over(os.pwd / "access_token.txt", newAccessToken)
@@ -89,11 +90,14 @@ object Requests {
   val backend =
     sttp.client4.wrappers.TryBackend(sttp.client4.DefaultSyncBackend())
 
-  def rawGet(endpoint: String): sttp.client4.Request[String] =
+  def rawGet(
+      endpoint: String,
+      contentType: String,
+  ): sttp.client4.Request[String] =
     sttp.client4.quick.quickRequest
       .get(Uri.parse(BASE_URL_QBO + endpoint).right.get)
       .header("User-Agent", USER_AGENT)
-      .header("Accept", "application/json")
+      .header("Accept", contentType)
 
   def rawPost(
       endpoint: String,
@@ -108,12 +112,15 @@ object Requests {
    * Make a GET request.
    * @param endpoint e.g. "/v3/company/${REALM_ID}/companyinfo/${REALM_ID}"
    */
-  def get(
+  def get[T](
       endpoint: String,
-      reTry: Boolean = true
-  ): Either[String, ujson.Value] = {
+      contentType: String,
+      responseSpec: sttp.client4.ResponseAs[T],
+      reTry: Boolean = true,
+  ): Either[String, T] = {
     // Construct the base request in case we need to re-try
-    val baseRequest = rawGet(endpoint)
+    val baseRequest =
+      rawGet(endpoint, contentType = contentType).response(responseSpec)
 
     val request = baseRequest.auth
       .bearer(AccessToken())
@@ -124,15 +131,24 @@ object Requests {
 
     if (response.code == StatusCode.Ok) {
       // probably OK
-      Right(ujson.read(response.body))
+      Right(response.body)
     } else if (response.code == StatusCode.Unauthorized) {
       // Possibly expired access token, may need to try again.
       // But don't re-try infinitely many times.
       AccessToken.update() match {
         case Left(x) => Left(x)
         case Right(_) => {
-          // Try again
-          get(endpoint, reTry = false)
+          if (reTry) {
+            // Try again
+            get(
+              endpoint,
+              contentType = contentType,
+              responseSpec = responseSpec,
+              reTry = false
+            )
+          } else {
+            Left(s"Requests.get: already re-tried and still failed ${response}")
+          }
         }
       }
     } else {
@@ -142,6 +158,70 @@ object Requests {
     }
   }
 
+  def getJson(endpoint: String): Either[String, ujson.Value] =
+    get(
+      endpoint,
+      contentType = "application/json",
+      responseSpec = sttp.client4.asStringAlways
+    ).map(ujson.read(_))
+}
+
+/**
+ * The Invoice object.
+ * https://developer.intuit.com/app/developer/qbo/docs/api/accounting/all-entities/invoice
+ */
+case class Invoice(
+    rawJson: Option[ujson.Value],
+    id: Int,
+    docNumber: String,
+    dueDate: String,
+    balance: BigDecimal,
+    totalAmt: BigDecimal,
+    customerRefRaw: ujson.Value
+)
+
+object Invoice {
+
+  /**
+   * Read an invoice.
+   */
+  def read(invoiceId: Int): Either[String, Invoice] = {
+    Requests
+      .getJson(
+        s"/v3/company/${REALM_ID}/invoice/${invoiceId}?minorversion=73",
+      )
+      .flatMap(j =>
+        j.obj
+          .get("Invoice")
+          .toRight(s"Invoice.read: malformed structure ${j}")
+      )
+      .map { json =>
+        Invoice(
+          rawJson = Some(json),
+          id = json("Id").str.toInt,
+          docNumber = json("DocNumber").str,
+          dueDate = json("DueDate").str,
+          balance = BigDecimal(json("Balance").num),
+          totalAmt = BigDecimal(json("TotalAmt").num),
+          customerRefRaw = json("CustomerRef"),
+        )
+      }
+  }
+
+  /**
+   * Get an invoice as PDF.
+   */
+  def pdf(invoiceId: Int, savePath: String): Either[String, Unit] = {
+    val r = Requests
+      .get(
+        s"/v3/company/${REALM_ID}/invoice/${invoiceId}/pdf?minorversion=73",
+        contentType = "application/pdf",
+        responseSpec = sttp.client4.asByteArrayAlways,
+      )
+    r.map(
+      os.write.over(os.Path(savePath), _)
+    )
+  }
 }
 
 /**
@@ -174,7 +254,7 @@ case class CompanyInfo(
 object CompanyInfo {
   def read(): CompanyInfo = {
     val rawJson =
-      Requests.get(s"/v3/company/${REALM_ID}/companyinfo/${REALM_ID}")
+      Requests.getJson(s"/v3/company/${REALM_ID}/companyinfo/${REALM_ID}")
     val json = rawJson.flatMap(j =>
       j.obj
         .get("CompanyInfo")

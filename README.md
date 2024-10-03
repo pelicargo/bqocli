@@ -42,3 +42,9 @@ By default, the production baseURL is used (`https://quickbooks.api.intuit.com`)
 ```shell
 ./mill -i BqoCLI.run
 ```
+
+4. Run it in a repl:
+
+```shell
+./mill -i BqoCLI.repl
+```
