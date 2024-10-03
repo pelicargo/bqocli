@@ -21,8 +21,12 @@ Disclaimer: This open source code is independently developed and is not official
 }
 ```
 
-3. Write the access token (`accessToken`) into `access_token.txt` and the refresh token (`refreshToken`) into `refresh_token.txt`.
+3. Write the access token (`accessToken`) into `access_token.txt` and the refresh token (`refreshToken`) into `refresh_token.txt`. The program will change them as needed.
 4. Note that the refresh token value [changes every 24 hours](https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/faq) so make sure to keep it up to date.
+5. Set the `REALM_ID` environment variable e.g. `export REALM_ID=9123456789012345`.
+6. Set the `CLIENT_ID` and `CLIENT_SECRET` variables (this is used to refresh access tokens).
+
+By default, the production baseURL is used (`https://quickbooks.api.intuit.com`). To change it, set the environment variable `BASE_URL_QBO`.
 
 # Quickstart
 
