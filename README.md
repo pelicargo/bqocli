@@ -48,3 +48,10 @@ By default, the production baseURL is used (`https://quickbooks.api.intuit.com`)
 ```shell
 ./mill -i BqoCLI.repl
 ```
+
+# Examples
+
+```scala
+// Get all invoices associated with customer ID 91 and send a reminder.
+Invoice.invoicesByCustomerId(91).foreach(Invoice.send(_))
+```

@@ -244,6 +244,37 @@ object Invoice {
     }
     fromRawJson(ujson.read(response.body))
   }
+
+  /**
+   * Query for invoices.
+   * TODO: since this can return sparse objects, solve the parsing
+   * problem another day.
+   */
+  def query(queryString: String): Seq[ujson.Obj] = {
+    // This is a bit of a hack
+    val encodedQuery = sttp.model.Uri.QuerySegmentEncoding.All(queryString)
+    Requests
+      .getJson(
+        s"/v3/company/${REALM_ID}/query?minorversion=73&query=${encodedQuery}"
+      )
+      .right
+      .get
+      .obj("QueryResponse")
+      .obj("Invoice")
+      .arr
+      .toSeq
+      .map(_.asInstanceOf[ujson.Obj])
+  }
+
+  /**
+   * Get all invoice IDs associated with a particular customer ID.
+   * Helper function.
+   */
+  def invoicesByCustomerId(customerId: Int): Set[Int] = Invoice
+    .query(
+      s"select Id, DocNumber from Invoice where CustomerRef = '${customerId}'"
+    )
+    .map(_.obj("Id").str.toInt).toSet
 }
 
 /**
