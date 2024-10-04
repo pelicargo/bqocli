@@ -267,6 +267,23 @@ object Invoice {
   }
 
   /**
+   * Get an invoice by invoice number.
+   * @return Invoice ID
+   */
+  def byDocNumber(docNumber: String): Either[String, Int] = {
+    val res = Invoice
+      .query(
+        "select Id from Invoice where " + s"DocNumber = '${docNumber}'"
+      )
+    if (res.length != 1)
+      Left(s"Invoice.byDocNumber: got unexpected result ${res}")
+    else
+      res.headOption
+        .map(_.obj("Id").str.toInt)
+        .toRight(s"Invoice.byDocNumber: couldn't convert ${res} to Int")
+  }
+
+  /**
    * Get all invoice IDs associated with a particular customer ID.
    * Helper function.
    */
