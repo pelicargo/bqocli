@@ -275,17 +275,19 @@ object Invoice {
   def query(queryString: String): Seq[ujson.Obj] = {
     // This is a bit of a hack
     val encodedQuery = sttp.model.Uri.QuerySegmentEncoding.All(queryString)
-    Requests
+    val queryResponse = Requests
       .getJson(
         s"/v3/company/${REALM_ID}/query?minorversion=73&query=${encodedQuery}"
       )
       .right
       .get
       .obj("QueryResponse")
-      .obj("Invoice")
-      .arr
-      .toSeq
-      .map(_.asInstanceOf[ujson.Obj])
+    queryResponse.obj.get("Invoice") match {
+      case None => Seq.empty // no results
+      case Some(x) =>
+        x.arr.toSeq
+          .map(_.asInstanceOf[ujson.Obj])
+    }
   }
 
   /**
