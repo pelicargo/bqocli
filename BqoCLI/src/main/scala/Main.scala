@@ -174,6 +174,7 @@ case class Invoice(
     rawJson: Option[ujson.Value],
     id: Int,
     docNumber: String,
+    txnDate: String,
     dueDate: String,
     balance: BigDecimal,
     totalAmt: BigDecimal,
@@ -195,6 +196,7 @@ object Invoice {
     id = json("Id").str.toInt,
     docNumber = json("DocNumber").str,
     dueDate = json("DueDate").str,
+    txnDate = json("TxnDate").str,
     balance = BigDecimal(json("Balance").num),
     totalAmt = BigDecimal(json("TotalAmt").num),
     customerRefRaw = json("CustomerRef"),
@@ -237,8 +239,28 @@ object Invoice {
           .map("&sendTo=" + _)
           .getOrElse("")
       )
+      .header("Accept", "application/json")
       .auth
       .bearer(AccessToken())
+    val response = request.send(Requests.backend) match {
+      case scala.util.Success(x) => x
+    }
+    fromRawJson(ujson.read(response.body))
+  }
+
+  /**
+   * Create an invoice.
+   */
+  def create(invoiceJson: ujson.Obj): Either[String, Invoice] = {
+    val request = Requests
+      .rawPost(
+        s"/v3/company/${REALM_ID}/invoice?minorversion=73"
+      )
+      .header("Accept", "application/json")
+      .header("Content-Type", "application/json")
+      .auth
+      .bearer(AccessToken())
+      .body(invoiceJson.toString)
     val response = request.send(Requests.backend) match {
       case scala.util.Success(x) => x
     }
