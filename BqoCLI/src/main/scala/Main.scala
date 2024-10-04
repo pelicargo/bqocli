@@ -179,7 +179,13 @@ case class Invoice(
     balance: BigDecimal,
     totalAmt: BigDecimal,
     customerRefRaw: ujson.Value
-)
+) {
+
+  /**
+   * Helper function to get the customer ID.
+   */
+  def customerId: Int = customerRefRaw("value").str.toInt
+}
 
 object Invoice {
 
@@ -306,6 +312,12 @@ object Invoice {
         .map(_.obj("Id").str.toInt)
         .toRight(s"Invoice.byDocNumber: couldn't convert ${res} to Int")
   }
+
+  /**
+   * Get an invoice object by invoice number.
+   */
+  def readByDocNumber(docNumber: String): Either[String, Invoice] =
+    byDocNumber(docNumber).flatMap(read)
 
   /**
    * Get all invoice IDs associated with a particular customer ID.
