@@ -52,6 +52,8 @@ By default, the production baseURL is used (`https://quickbooks.api.intuit.com`)
 # Examples
 
 ```scala
+import bqocli._
+
 // Get all open invoices associated with customer ID 91 and send a reminder.
 Invoice.invoicesByCustomerId(91, onlyOpen = true).foreach(Invoice.send(_))
 
