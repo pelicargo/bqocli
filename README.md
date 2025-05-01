@@ -59,4 +59,7 @@ Invoice.invoicesByCustomerId(91, onlyOpen = true).foreach(Invoice.send(_))
 
 // Get open invoices and associated invoice numbers.
 Invoice.invoicesByCustomerId(91, onlyOpen = true).map(x => (x, Invoice.read(x).right.get.docNumber))
+
+// Get last invoice of company.
+Invoice.read(Invoice.invoicesByCustomerId(91, onlyOpen = false).toSeq.sorted.last)
 ```
