@@ -11,6 +11,21 @@ val BASE_URL_QBO =
   sys.env.getOrElse("BASE_URL_QBO", "https://quickbooks.api.intuit.com")
 
 /**
+ * Common params used.
+ */
+case class CommonParams(
+    // base URL
+    val baseUrl: String,
+    // User-agent to use for API calls.
+    val userAgent: String,
+)
+
+val qboParams = CommonParams(
+  baseUrl = BASE_URL_QBO,
+  userAgent = "APIExplorer",
+)
+
+/**
  * Realm ID must be set and doesn't change.
  */
 val REALM_ID = sys.env.get("REALM_ID") match {
@@ -22,11 +37,6 @@ val REALM_ID = sys.env.get("REALM_ID") match {
 // These are required to refresh access tokens.
 val CLIENT_ID: String = sys.env.get("CLIENT_ID").get
 val CLIENT_SECRET: String = sys.env.get("CLIENT_SECRET").get
-
-/**
- * User-agent to use for API calls.
- */
-val USER_AGENT = "APIExplorer"
 
 /**
  * Refresh token.
@@ -42,6 +52,8 @@ object RefreshToken {
  */
 object AccessToken {
 
+  given CommonParams = qboParams
+
   def apply(): String = os.read(os.pwd / "access_token.txt").trim
 
   /**
@@ -49,7 +61,7 @@ object AccessToken {
    * https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0#refresh-tokens
    */
   def update(): Either[String, Unit] = {
-    val request = Requests
+    val request = Common
       .rawPost(
         "/oauth2/v1/tokens/bearer",
         baseUrl = Some("https://oauth.platform.intuit.com")
@@ -59,7 +71,7 @@ object AccessToken {
       .body(
         Map("grant_type" -> "refresh_token", "refresh_token" -> RefreshToken())
       )
-    val response = request.send(Requests.backend) match {
+    val response = request.send(Common.backend) match {
       case scala.util.Success(x) => x
     }
 
@@ -78,10 +90,7 @@ object AccessToken {
   }
 }
 
-/**
- * Making requests to the QBO API.
- */
-object Requests {
+object Common {
 
   /**
    * sttp backend.
@@ -93,20 +102,28 @@ object Requests {
   def rawGet(
       endpoint: String,
       contentType: String,
-  ): sttp.client4.Request[String] =
+  )(using p: CommonParams): sttp.client4.Request[String] =
     sttp.client4.quick.quickRequest
-      .get(Uri.parse(BASE_URL_QBO + endpoint).right.get)
-      .header("User-Agent", USER_AGENT)
+      .get(Uri.parse(p.baseUrl + endpoint).right.get)
+      .header("User-Agent", p.userAgent)
       .header("Accept", contentType)
 
   def rawPost(
       endpoint: String,
       baseUrl: Option[String] = None
-  ): sttp.client4.Request[String] =
+  )(using p: CommonParams): sttp.client4.Request[String] =
     sttp.client4.quick.quickRequest
-      .post(Uri.parse(baseUrl.getOrElse(BASE_URL_QBO) + endpoint).right.get)
-      .header("User-Agent", USER_AGENT)
+      .post(Uri.parse(baseUrl.getOrElse(p.baseUrl) + endpoint).right.get)
+      .header("User-Agent", p.userAgent)
       .header("Accept", "application/json")
+}
+
+/**
+ * Making requests to the QBO API.
+ */
+object Requests {
+
+  given CommonParams = qboParams
 
   /**
    * Make a GET request.
@@ -120,12 +137,12 @@ object Requests {
   ): Either[String, T] = {
     // Construct the base request in case we need to re-try
     val baseRequest =
-      rawGet(endpoint, contentType = contentType).response(responseSpec)
+      Common.rawGet(endpoint, contentType = contentType).response(responseSpec)
 
     val request = baseRequest.auth
       .bearer(AccessToken())
     val response = request
-      .send(backend) match {
+      .send(Common.backend) match {
       case scala.util.Success(x) => x
     }
 
@@ -189,6 +206,8 @@ case class Invoice(
 
 object Invoice {
 
+  given CommonParams = qboParams
+
   def fromRawJson(json: ujson.Value): Either[String, Invoice] = {
     json.obj
       .get("Invoice")
@@ -239,7 +258,7 @@ object Invoice {
       invoiceId: Int,
       emailAddr: Option[String] = None
   ): Either[String, Invoice] = {
-    val request = Requests
+    val request = Common
       .rawPost(
         s"/v3/company/${REALM_ID}/invoice/${invoiceId}/send?minorversion=73" + emailAddr
           .map("&sendTo=" + _)
@@ -248,7 +267,7 @@ object Invoice {
       .header("Accept", "application/json")
       .auth
       .bearer(AccessToken())
-    val response = request.send(Requests.backend) match {
+    val response = request.send(Common.backend) match {
       case scala.util.Success(x) => x
     }
     fromRawJson(ujson.read(response.body))
@@ -258,7 +277,7 @@ object Invoice {
    * Create an invoice.
    */
   def create(invoiceJson: ujson.Obj): Either[String, Invoice] = {
-    val request = Requests
+    val request = Common
       .rawPost(
         s"/v3/company/${REALM_ID}/invoice?minorversion=73"
       )
@@ -267,7 +286,7 @@ object Invoice {
       .auth
       .bearer(AccessToken())
       .body(invoiceJson.toString)
-    val response = request.send(Requests.backend) match {
+    val response = request.send(Common.backend) match {
       case scala.util.Success(x) => x
     }
     fromRawJson(ujson.read(response.body))
