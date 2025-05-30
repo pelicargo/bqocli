@@ -120,6 +120,198 @@ object Customer {
 }
 
 /**
+ * The Payout object.
+ * https://docs.stripe.com/api/payouts/object
+ */
+case class Payout(
+    rawJson: Option[ujson.Value],
+    id: String,
+    // Amount in cents
+    amount: Long,
+    statement_descriptor: Option[String],
+    status: String,
+)
+
+object Payout {
+
+  given CommonParams = stripeParams
+
+  def fromRawJson(json: ujson.Value): Either[String, Payout] = {
+    Right(fromJsonDict(json.obj))
+  }
+
+  def fromJsonDict(json: ujson.Obj): Payout = Payout(
+    rawJson = Some(json),
+    id = json("id").str,
+    amount = json("amount").num.toLong,
+    statement_descriptor = Utils.nullableString(json("statement_descriptor")),
+    status = json("status").str,
+  )
+
+  /**
+   * Retrieve
+   * https://docs.stripe.com/api/payouts/retrieve
+   */
+  def retrieve(id: String): Either[String, Payout] = {
+    Requests
+      .getJson(s"/v1/payouts/${id}")
+      .flatMap(fromRawJson)
+  }
+}
+
+/**
+ * The Charge object.
+ * https://docs.stripe.com/api/charges
+ */
+case class Charge(
+    rawJson: Option[ujson.Value],
+    id: String,
+    description: String,
+    // Amount in cents
+    amount: Long,
+    created: Long,
+    invoice: Option[String],
+)
+
+object Charge {
+
+  given CommonParams = stripeParams
+
+  def fromRawJson(json: ujson.Value): Either[String, Charge] = {
+    Right(fromJsonDict(json.obj))
+  }
+
+  def fromJsonDict(json: ujson.Obj): Charge = Charge(
+    rawJson = Some(json),
+    id = json("id").str,
+    description = json("description").str,
+    amount = json("amount").num.toLong,
+    created = json("created").num.toLong,
+    invoice = json.value.get("invoice") match {
+      case Some(ujson.Null) => None
+      case Some(x) => Some(x.str)
+      case None => None
+    }
+  )
+
+  /**
+   * Retrieve
+   * https://docs.stripe.com/api/charges/retrieve
+   */
+  def retrieve(id: String): Either[String, Charge] = {
+    Requests
+      .getJson(s"/v1/charges/${id}")
+      .flatMap(fromRawJson)
+  }
+}
+
+/**
+ * The PaymentIntent object.
+ * https://docs.stripe.com/api/payment_intents/object
+ */
+case class PaymentIntent(
+    rawJson: Option[ujson.Value],
+    id: String,
+    // Amount in cents
+    amount: Long,
+)
+
+object PaymentIntent {
+
+  given CommonParams = stripeParams
+
+  def fromRawJson(json: ujson.Value): Either[String, PaymentIntent] = {
+    Right(fromJsonDict(json.obj))
+  }
+
+  def fromJsonDict(json: ujson.Obj): PaymentIntent = PaymentIntent(
+    rawJson = Some(json),
+    id = json("id").str,
+    amount = json("amount").num.toLong,
+  )
+
+  /**
+   * Retrieve
+   https://docs.stripe.com/api/payment_intents/retrieve
+   */
+  def retrieve(id: String): Either[String, PaymentIntent] = {
+    Requests
+      .getJson(s"/v1/payment_intents/${id}")
+      .flatMap(fromRawJson)
+  }
+}
+
+/**
+ * The BalanceTransaction object.
+ * https://docs.stripe.com/api/balance_transactions
+ */
+case class BalanceTransaction(
+    rawJson: Option[ujson.Value],
+    id: String,
+    // Amount in cents
+    amount: Long,
+    // Fee in cents
+    fee: Long,
+    created: Long,
+    typ: String,
+    source: Option[String],
+)
+
+object BalanceTransaction {
+
+  given CommonParams = stripeParams
+
+  def fromRawJson(json: ujson.Value): Either[String, BalanceTransaction] = {
+    Right(fromJsonDict(json.obj))
+  }
+
+  def fromJsonDict(json: ujson.Obj): BalanceTransaction = BalanceTransaction(
+    rawJson = Some(json),
+    id = json("id").str,
+    amount = json("amount").num.toLong,
+    fee = json("fee").num.toLong,
+    created = json("created").num.toLong,
+    typ = json("type").str,
+    source = Utils.nullableString(json("source")),
+  )
+
+  /**
+   * Retrieve
+   * https://docs.stripe.com/api/payouts/retrieve
+   */
+  def retrieve(id: String): Either[String, BalanceTransaction] = {
+    Requests
+      .getJson(s"/v1/balance_transactions/${id}")
+      .flatMap(fromRawJson)
+  }
+
+  /**
+   * https://docs.stripe.com/api/balance_transactions/list
+   */
+  def list(payout: Option[String] = None, typ: Option[String] = None, limit: Option[Int] = None): Seq[BalanceTransaction] = {
+    val map = Map[String,String]()
+      ++ payout.map(x => ("payout" -> x))
+      ++ typ.map(x => ("type" -> x))
+      ++ limit.map(x => ("limit" -> x.toString))
+
+    val rawResp = Requests
+      .getJson(
+        "/v1/balance_transactions",
+        reqFunc = (
+            x =>
+              x.body(map)
+        )
+      )
+
+    rawResp match {
+      case Right(x) => x.obj("data").arr.toSeq.map(r => fromRawJson(r) match {
+        case Right(b) => b
+      })
+    }
+  }
+}
+
+/**
  * The Invoice object.
  * https://docs.stripe.com/api/invoices
  */
@@ -131,6 +323,7 @@ case class Invoice(
     created: Long,
     // Total after discounts and taxes (in integer cents)
     total: Long,
+    number: Option[String],
 )
 
 object Invoice {
@@ -147,6 +340,7 @@ object Invoice {
     customer = json("customer").str,
     created = json("created").num.toLong,
     total = json("total").num.toLong,
+    number = Utils.nullableString(json("number")),
   )
 
   /**

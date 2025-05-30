@@ -20,6 +20,28 @@ case class CommonParams(
     val userAgent: String,
 )
 
+object Utils {
+  def nullableString(x: ujson.Value): Option[String] = x match {
+      case ujson.Null => None
+      case v => Some(v.str)
+  }
+
+  def intCentsToString(total: Long): String = {
+    val cents = (total.abs % 100)
+    val centsStr: String = (if (cents < 10) "0" else "") + cents.toString
+    val amount = (total / 100).toString + "." + centsStr
+    amount
+  }
+
+  def utcToDate(ts: Long): String = {
+    java.time.LocalDateTime.ofEpochSecond(
+      ts,
+      0,
+      java.time.ZoneOffset.UTC
+    ).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+  }
+}
+
 val qboParams = CommonParams(
   baseUrl = BASE_URL_QBO,
   userAgent = "APIExplorer",
