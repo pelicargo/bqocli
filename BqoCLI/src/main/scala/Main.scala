@@ -22,8 +22,8 @@ case class CommonParams(
 
 object Utils {
   def nullableString(x: ujson.Value): Option[String] = x match {
-      case ujson.Null => None
-      case v => Some(v.str)
+    case ujson.Null => None
+    case v          => Some(v.str)
   }
 
   def intCentsToString(total: Long): String = {
@@ -34,11 +34,13 @@ object Utils {
   }
 
   def utcToDate(ts: Long): String = {
-    java.time.LocalDateTime.ofEpochSecond(
-      ts,
-      0,
-      java.time.ZoneOffset.UTC
-    ).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+    java.time.LocalDateTime
+      .ofEpochSecond(
+        ts,
+        0,
+        java.time.ZoneOffset.UTC
+      )
+      .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
   }
 }
 

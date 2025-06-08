@@ -93,7 +93,6 @@ case class Customer(
     invoice_prefix: String,
 )
 
-
 object Customer {
 
   def fromRawJson(json: ujson.Value): Either[String, Customer] = {
@@ -189,8 +188,8 @@ object Charge {
     created = json("created").num.toLong,
     invoice = json.value.get("invoice") match {
       case Some(ujson.Null) => None
-      case Some(x) => Some(x.str)
-      case None => None
+      case Some(x)          => Some(x.str)
+      case None             => None
     }
   )
 
@@ -232,7 +231,7 @@ object PaymentIntent {
 
   /**
    * Retrieve
-   https://docs.stripe.com/api/payment_intents/retrieve
+   *   https://docs.stripe.com/api/payment_intents/retrieve
    */
   def retrieve(id: String): Either[String, PaymentIntent] = {
     Requests
@@ -290,8 +289,12 @@ object BalanceTransaction {
   /**
    * https://docs.stripe.com/api/balance_transactions/list
    */
-  def list(payout: Option[String] = None, typ: Option[String] = None, limit: Option[Int] = None): Seq[BalanceTransaction] = {
-    val map = Map[String,String]()
+  def list(
+      payout: Option[String] = None,
+      typ: Option[String] = None,
+      limit: Option[Int] = None
+  ): Seq[BalanceTransaction] = {
+    val map = Map[String, String]()
       ++ payout.map(x => ("payout" -> x))
       ++ typ.map(x => ("type" -> x))
       ++ limit.map(x => ("limit" -> x.toString))
@@ -300,15 +303,20 @@ object BalanceTransaction {
       .getJson(
         "/v1/balance_transactions",
         reqFunc = (
-            x =>
-              x.body(map)
+            x => x.body(map)
         )
       )
 
     rawResp match {
-      case Right(x) => x.obj("data").arr.toSeq.map(r => fromRawJson(r) match {
-        case Right(b) => b
-      })
+      case Right(x) =>
+        x.obj("data")
+          .arr
+          .toSeq
+          .map(r =>
+            fromRawJson(r) match {
+              case Right(b) => b
+            }
+          )
     }
   }
 }
