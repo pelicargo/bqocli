@@ -254,6 +254,7 @@ case class BalanceTransaction(
     fee: Long,
     created: Long,
     typ: String,
+    description: String,
     source: Option[String],
 )
 
@@ -272,6 +273,7 @@ object BalanceTransaction {
     fee = json("fee").num.toLong,
     created = json("created").num.toLong,
     typ = json("type").str,
+    description = json("description").str,
     source = Utils.nullableString(json("source")),
   )
 
