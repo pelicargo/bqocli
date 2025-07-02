@@ -29,7 +29,7 @@ object Utils {
   def intCentsToString(total: Long): String = {
     val cents = (total.abs % 100)
     val centsStr: String = (if (cents < 10) "0" else "") + cents.toString
-    val amount = (total / 100).toString + "." + centsStr
+    val amount = (if (total < 0) "-" else "") + (total.abs / 100).toString + "." + centsStr
     amount
   }
 
