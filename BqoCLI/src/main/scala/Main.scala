@@ -325,12 +325,12 @@ object Invoice {
   def query(queryString: String): Seq[ujson.Obj] = {
     // This is a bit of a hack
     val encodedQuery = sttp.model.Uri.QuerySegmentEncoding.All(queryString)
-    val queryResponse = Requests
+    val queryResponse = (Requests
       .getJson(
         s"/v3/company/${REALM_ID}/query?minorversion=73&query=${encodedQuery}"
-      )
-      .right
-      .get
+      ) match {
+      case Right(x) => x
+    })
       .obj("QueryResponse")
     queryResponse.obj.get("Invoice") match {
       case None => Seq.empty // no results
