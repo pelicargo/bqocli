@@ -63,3 +63,20 @@ Invoice.invoicesByCustomerId(91, onlyOpen = true).map(x => (x, Invoice.read(x).r
 // Get last invoice of company.
 Invoice.read(Invoice.invoicesByCustomerId(91, onlyOpen = false).toSeq.sorted.last)
 ```
+
+# Notes
+
+If you get `stty` errors like this, this is a [bug in Ubuntu/rust-coreutils](https://bugs.launchpad.net/ubuntu/+source/rust-coreutils/+bug/2127106/comments/9).
+
+```
+/bin/stty: invalid argument '6506:5:f00bf:8a3b:3:1c:7f:15:4:0:1:0:11:13:1a:0:12:f:17:16:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0'
+Exception in thread "main" java.lang.RuntimeException: Nonzero exit value: 1
+	at scala.sys.process.ProcessBuilderImpl$AbstractBuilder.slurp(ProcessBuilderImpl.scala:164)
+	at scala.sys.process.ProcessBuilderImpl$AbstractBuilder.$bang$bang(ProcessBuilderImpl.scala:121)
+	at ammonite.terminal.TTY$.stty(Utils.scala:106)
+	at ammonite.terminal.TTY$.withSttyOverride(Utils.scala:122)
+	at ammonite.terminal.Terminal$.readLine(Terminal.scala:38)
+	at ammonite.repl.AmmoniteFrontEnd.readLine(AmmoniteFrontEnd.scala:137)
+	at ammonite.repl.AmmoniteFrontEnd.action(AmmoniteFrontEnd.scala:30)
+	at ammonite.repl.Repl.action$$anonfun$2$$anonfun$2(Repl.scala:201)
+```
