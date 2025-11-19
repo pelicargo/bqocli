@@ -209,6 +209,60 @@ object Requests {
 }
 
 /**
+ * The Bill object.
+ * https://developer.intuit.com/app/developer/qbo/docs/api/accounting/all-entities/bill
+ */
+case class Bill(
+    rawJson: Option[ujson.Value],
+    id: Int
+) {}
+
+object Bill {
+  given CommonParams = qboParams
+
+  def fromJsonDict(json: ujson.Obj): Bill = Bill(
+    rawJson = Some(json),
+    id = json("Id").str.toInt,
+  )
+
+  def fromRawJson(json: ujson.Value): Either[String, Bill] = {
+    json.obj
+      .get("Bill")
+      .toRight(s"Bill.read: malformed structure ${json}")
+      .map(_.asInstanceOf[ujson.Obj])
+      .map(fromJsonDict)
+  }
+
+  /**
+   * Read a bill.
+   */
+  def read(billId: Int): Either[String, Bill] = {
+    Requests
+      .getJson(s"/v3/company/${REALM_ID}/bill/${billId}")
+      .flatMap(fromRawJson)
+  }
+
+  /**
+   * Create a bill.
+   */
+  def create(billJson: ujson.Obj): Either[String, Bill] = {
+    val request = Common
+      .rawPost(
+        s"/v3/company/${REALM_ID}/bill"
+      )
+      .header("Accept", "application/json")
+      .header("Content-Type", "application/json")
+      .auth
+      .bearer(AccessToken())
+      .body(billJson.toString)
+    val response = request.send(Common.backend) match {
+      case scala.util.Success(x) => x
+    }
+    fromRawJson(ujson.read(response.body))
+  }
+}
+
+/**
  * The Invoice object.
  * https://developer.intuit.com/app/developer/qbo/docs/api/accounting/all-entities/invoice
  */
