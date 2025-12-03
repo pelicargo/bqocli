@@ -135,12 +135,13 @@ object Common {
 
   def rawPost(
       endpoint: String,
+      contentType: String = "application/json",
       baseUrl: Option[String] = None
   )(using p: CommonParams): sttp.client4.Request[String] =
     sttp.client4.quick.quickRequest
       .post(Uri.parse(baseUrl.getOrElse(p.baseUrl) + endpoint).right.get)
       .header("User-Agent", p.userAgent)
-      .header("Accept", "application/json")
+      .header("Accept", contentType)
 }
 
 /**

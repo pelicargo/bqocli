@@ -68,6 +68,41 @@ object Requests {
     }
   }
 
+  /**
+   * Make a POST request.
+   * @param endpoint Endpoint
+   * @param reqFunc optional function to create the request
+   */
+  def post[T](
+      endpoint: String,
+      contentType: String,
+      responseSpec: sttp.client4.ResponseAs[T],
+      reqFunc: (sttp.client4.Request[T] => sttp.client4.Request[T]) =
+        identity[sttp.client4.Request[T]],
+  ): Either[String, T] = {
+    // Construct the base request in case we need to re-try
+    val baseRequest =
+      Common.rawPost(endpoint, contentType = contentType).response(responseSpec)
+
+    val request = reqFunc(
+      baseRequest.auth
+        .bearer(STRIPE_API_KEY)
+    )
+    val response = request
+      .send(Common.backend) match {
+      case scala.util.Success(x) => x
+    }
+
+    if (response.code == StatusCode.Ok) {
+      // probably OK
+      Right(response.body)
+    } else {
+      Left(
+        s"Requests.post: got unknown response ${response} to request ${request}"
+      )
+    }
+  }
+
   def getJson(
       endpoint: String,
       reqFunc: (sttp.client4.Request[String] => sttp.client4.Request[String]) =
@@ -78,6 +113,21 @@ object Requests {
       contentType = "application/json",
       responseSpec = sttp.client4.asStringAlways,
       reqFunc = reqFunc,
+    ).map(ujson.read(_))
+
+  def postGetJson(
+      endpoint: String,
+      data: Map[String, String],
+      reqFunc: (sttp.client4.Request[String] => sttp.client4.Request[String]) =
+        identity[sttp.client4.Request[String]],
+  ): Either[String, ujson.Value] =
+    post(
+      endpoint,
+      contentType = "application/json",
+      responseSpec = sttp.client4.asStringAlways,
+      reqFunc = (r: sttp.client4.Request[String]) => {
+        reqFunc(r.body(data))
+      },
     ).map(ujson.read(_))
 }
 
@@ -360,6 +410,24 @@ object Invoice {
   def retrieve(invoiceId: String): Either[String, Invoice] = {
     Requests
       .getJson(s"/v1/invoices/${invoiceId}")
+      .flatMap(fromRawJson)
+  }
+
+  /**
+   * Pay an invoice.
+   * Only out of band supported for now!
+   * https://docs.stripe.com/api/invoices/pay
+   */
+  def pay(
+      invoiceId: String,
+      paidOutOfBand: Boolean
+  ): Either[String, Invoice] = {
+    require(paidOutOfBand, "Only out of band supported for now")
+    Requests
+      .postGetJson(
+        s"/v1/invoices/${invoiceId}/pay",
+        Map("paid_out_of_band" -> paidOutOfBand.toString)
+      )
       .flatMap(fromRawJson)
   }
 
