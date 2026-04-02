@@ -141,7 +141,26 @@ case class Customer(
     name: String,
     email: String,
     invoice_prefix: String,
+    invoice_settings: CustomerInvoiceSettings,
 )
+
+case class CustomerInvoiceSettings(
+    custom_fields: ujson.Value,
+    default_payment_method: Option[String],
+    footer: Option[String],
+    rendering_options: ujson.Value,
+)
+
+object CustomerInvoiceSettings {
+  def fromJsonDict(json: ujson.Obj): CustomerInvoiceSettings = {
+    CustomerInvoiceSettings(
+      custom_fields = json("custom_fields"),
+      default_payment_method = json("default_payment_method").strOpt,
+      footer = json("footer").strOpt,
+      rendering_options = json("rendering_options"),
+    )
+  }
+}
 
 object Customer {
 
@@ -155,6 +174,8 @@ object Customer {
     name = json("name").str,
     email = json("email").str,
     invoice_prefix = json("invoice_prefix").str,
+    invoice_settings =
+      CustomerInvoiceSettings.fromJsonDict(json("invoice_settings").obj),
   )
 
   /**
@@ -263,6 +284,13 @@ case class PaymentIntent(
     id: String,
     // Amount in cents
     amount: Long,
+    confirm: Boolean,
+    currency: String,
+    customer: Option[String],
+    payment_method: Option[String],
+    description: String,
+    statement_descriptor: String,
+    statement_descriptor_suffix: String,
 )
 
 object PaymentIntent {
@@ -277,6 +305,20 @@ object PaymentIntent {
     rawJson = Some(json),
     id = json("id").str,
     amount = json("amount").num.toLong,
+    confirm = json.value.get("confirm").map(_.bool).getOrElse(false),
+    currency = json("currency").str,
+    customer = json.value.get("customer").flatMap(v => Utils.nullableString(v)),
+    payment_method =
+      json.value.get("payment_method").flatMap(v => Utils.nullableString(v)),
+    description = json("description").str,
+    statement_descriptor = json.value
+      .get("statement_descriptor")
+      .flatMap(v => Utils.nullableString(v))
+      .getOrElse(""),
+    statement_descriptor_suffix = json.value
+      .get("statement_descriptor_suffix")
+      .flatMap(v => Utils.nullableString(v))
+      .getOrElse(""),
   )
 
   /**
@@ -286,6 +328,85 @@ object PaymentIntent {
   def retrieve(id: String): Either[String, PaymentIntent] = {
     Requests
       .getJson(s"/v1/payment_intents/${id}")
+      .flatMap(fromRawJson)
+  }
+
+  /**
+   * Simple creation of USD invoices, auto-picking the default payment method.
+   */
+  def createDefault(
+      amount: Long,
+      customer: String,
+      description: String,
+      statementDescriptor: String,
+      statementDescriptorSuffix: String,
+  ): Either[String, PaymentIntent] = {
+    val paymentMethod = stripe.Customer
+      .retrieve(customer)
+      .right
+      .get
+      .invoice_settings
+      .default_payment_method
+      .get
+    create(
+      amount = amount,
+      customer = Some(customer),
+      description = description,
+      currency = "usd",
+      confirm = true,
+      paymentMethod = paymentMethod,
+      offSession = Some(true),
+      statementDescriptor = statementDescriptor,
+      statementDescriptorSuffix = statementDescriptorSuffix,
+    )
+  }
+
+  /**
+   * Create a PaymentIntent
+   * https://docs.stripe.com/api/payment_intents/create
+   */
+  def create(
+      amount: Long,
+      currency: String,
+      paymentMethod: String,
+      confirm: Boolean = false,
+      customer: Option[String] = None,
+      description: String = "",
+      offSession: Option[Boolean] = None,
+      statementDescriptor: String = "",
+      statementDescriptorSuffix: String = ""
+  ): Either[String, PaymentIntent] = {
+
+    require(amount > 0, "Amount must be greater than 0")
+    require(
+      offSession.isDefined == confirm,
+      "offSession should be present only when confirm=true"
+    )
+
+    // The actual limit is 22, including the 2-character separator
+    require(
+      statementDescriptor.length + statementDescriptorSuffix.length + 2 <= 22,
+      "Total statement descriptor (prefix + suffix + separator) exceeds 22 characters"
+    )
+
+    val formData: Map[String, String] = Map(
+      "amount" -> amount.toString,
+      "currency" -> currency,
+      "payment_method" -> paymentMethod,
+      "confirm" -> confirm.toString,
+      "description" -> description,
+      "statement_descriptor" -> statementDescriptor,
+      "statement_descriptor_suffix" -> statementDescriptorSuffix,
+      // We don't support redirect-only methods for now
+      "automatic_payment_methods[enabled]" -> "true",
+      "automatic_payment_methods[allow_redirects]" -> "never",
+    ) ++ customer.toSeq.map("customer" -> _)
+
+    Requests
+      .postGetJson(
+        "/v1/payment_intents",
+        formData
+      )
       .flatMap(fromRawJson)
   }
 }
