@@ -195,15 +195,35 @@ object Customer {
     Right(fromJsonDict(json.obj))
   }
 
-  def fromJsonDict(json: ujson.Obj): Customer = Customer(
-    rawJson = Some(json),
-    id = json("id").str,
-    name = json("name").str,
-    email = json("email").str,
-    invoice_prefix = json("invoice_prefix").str,
-    invoice_settings =
-      CustomerInvoiceSettings.fromJsonDict(json("invoice_settings").obj),
-  )
+  def fromJsonDict(json: ujson.Obj): Customer = {
+    // Only used to identify the customer in error messages, so tolerate a
+    // missing id rather than throwing while building the message.
+    val idStr = json.value.get("id").flatMap(_.strOpt).getOrElse("<unknown id>")
+
+    // Stripe leaves these null when they're unset. Plain `.str` turns that
+    // into an opaque `ujson.Value$InvalidData: Expected ujson.Str (data:
+    // null)`, so say which customer and which field instead.
+    def requiredStr(field: String): String = {
+      val value = json.value.getOrElse(field, ujson.Null)
+      require(
+        value != ujson.Null,
+        s"Stripe customer ${idStr} has no '${field}' set. Either set one in " +
+          s"the Stripe dashboard, or change Customer.${field} to " +
+          "Option[String] so it can be missing."
+      )
+      value.str
+    }
+
+    Customer(
+      rawJson = Some(json),
+      id = json("id").str,
+      name = requiredStr("name"),
+      email = requiredStr("email"),
+      invoice_prefix = json("invoice_prefix").str,
+      invoice_settings =
+        CustomerInvoiceSettings.fromJsonDict(json("invoice_settings").obj),
+    )
+  }
 
   /**
    * Retrieve an invoice.
