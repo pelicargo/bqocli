@@ -700,4 +700,75 @@ object Invoice {
     )
     rawJson.flatMap(fromRawJson)
   }
+
+  private val descriptionDateFormat = java.time.format.DateTimeFormatter
+    .ofPattern("MMM d, yyyy", java.util.Locale.US)
+
+  /**
+   * Helper function to render an invoice's line items and totals the way the Stripe dashboard
+   * shows them.
+   *
+   * Reads `lines` straight off the raw JSON, since the Invoice case class
+   * doesn't model line items. Purely formatting: fetch the invoice with
+   * `retrieve` or `searchByNumber` first.
+   */
+  def describe(invoice: Invoice): String = {
+    val json = invoice.rawJson match {
+      case Some(x) => x.obj
+      case None =>
+        throw new IllegalArgumentException(
+          s"invoice ${invoice.id} has no rawJson to describe"
+        )
+    }
+
+    def fmtDate(ts: Long): String = java.time.LocalDateTime
+      .ofEpochSecond(ts, 0, java.time.ZoneOffset.UTC)
+      .format(descriptionDateFormat)
+
+    def money(cents: Long): String = "$" + Utils.intCentsToString(cents)
+
+    // Only the first page of line items is embedded in the invoice object
+    require(
+      !json("lines")("has_more").bool,
+      s"invoice ${invoice.id} has more than one page of line items; fetch " +
+        s"/v1/invoices/${invoice.id}/lines instead"
+    )
+
+    val lines = json("lines")("data").arr.toSeq.map { line =>
+      val description =
+        line.obj.get("description").flatMap(_.strOpt).getOrElse("")
+      val quantity = line.obj.get("quantity").flatMap(_.numOpt).map(_.toLong)
+      val amount = line("amount").num.toLong
+      val period = line("period")
+
+      Seq(
+        description,
+        s"${fmtDate(period("start").num.toLong)} - " +
+          s"${fmtDate(period("end").num.toLong)}",
+        quantity.map(_.toString).getOrElse("-"),
+        // Stripe doesn't always send a unit amount, so derive it
+        quantity.filter(_ != 0).map(q => money(amount / q)).getOrElse("-"),
+        money(amount),
+      ).mkString("\n")
+    }
+
+    def optionalCents(field: String): Option[Long] =
+      json.get(field).flatMap(_.numOpt).map(_.toLong)
+
+    // `tax` was replaced by `total_taxes` in newer API versions
+    val tax = json
+      .get("total_taxes")
+      .map(_.arr.map(_("amount").num.toLong).sum)
+      .orElse(optionalCents("tax"))
+
+    val totals = Seq(
+      "Subtotal" -> money(json("subtotal").num.toLong),
+      "Total excluding tax" ->
+        optionalCents("total_excluding_tax").map(money).getOrElse("-"),
+      "Tax" -> tax.filter(_ != 0).map(money).getOrElse("-"),
+      "Total" -> money(json("total").num.toLong),
+    ).map((label, value) => s"${label}\n\t${value}")
+
+    (lines ++ totals).mkString("\n\t\n")
+  }
 }
