@@ -132,6 +132,33 @@ object Requests {
 }
 
 /**
+ * A date interval filter, as accepted by Stripe's list endpoints.
+ * All values are measured in seconds since the Unix epoch.
+ *
+ * @param gt Minimum value to filter by (exclusive)
+ * @param gte Minimum value to filter by (inclusive)
+ * @param lt Maximum value to filter by (exclusive)
+ * @param lte Maximum value to filter by (inclusive)
+ */
+case class DateFilter(
+    gt: Option[Long] = None,
+    gte: Option[Long] = None,
+    lt: Option[Long] = None,
+    lte: Option[Long] = None,
+) {
+
+  /**
+   * Render into Stripe's bracketed parameters, e.g. `created[gte]`.
+   */
+  def toParams(name: String): Map[String, String] =
+    Map[String, String]()
+      ++ gt.map(x => (s"${name}[gt]" -> x.toString))
+      ++ gte.map(x => (s"${name}[gte]" -> x.toString))
+      ++ lt.map(x => (s"${name}[lt]" -> x.toString))
+      ++ lte.map(x => (s"${name}[lte]" -> x.toString))
+}
+
+/**
  * The Customer object.
  * https://docs.stripe.com/api/customers/object
  */
@@ -493,6 +520,29 @@ object BalanceTransaction {
 }
 
 /**
+ * The status of an invoice.
+ * https://docs.stripe.com/billing/invoices/workflow#workflow-overview
+ */
+enum InvoiceStatus(val value: String) {
+  case Draft extends InvoiceStatus("draft")
+  case Open extends InvoiceStatus("open")
+  case Paid extends InvoiceStatus("paid")
+  case Uncollectible extends InvoiceStatus("uncollectible")
+  case Void extends InvoiceStatus("void")
+}
+
+object InvoiceStatus {
+
+  /**
+   * Parse a status. Returns None for anything unrecognised, so that a status
+   * newly added by Stripe doesn't break parsing of the whole invoice. The
+   * original value stays available via `Invoice.rawJson`.
+   */
+  def fromString(s: String): Option[InvoiceStatus] =
+    InvoiceStatus.values.find(_.value == s)
+}
+
+/**
  * The Invoice object.
  * https://docs.stripe.com/api/invoices
  */
@@ -505,6 +555,10 @@ case class Invoice(
     // Total after discounts and taxes (in integer cents)
     total: Long,
     number: Option[String],
+    // None if the invoice has no status, or one Stripe added after this was written
+    status: Option[InvoiceStatus],
+    // Final amount due at this time (in integer cents)
+    amount_due: Long,
 )
 
 object Invoice {
@@ -522,6 +576,9 @@ object Invoice {
     created = json("created").num.toLong,
     total = json("total").num.toLong,
     number = Utils.nullableString(json("number")),
+    status =
+      Utils.nullableString(json("status")).flatMap(InvoiceStatus.fromString),
+    amount_due = json("amount_due").num.toLong,
   )
 
   /**
@@ -532,6 +589,54 @@ object Invoice {
     Requests
       .getJson(s"/v1/invoices/${invoiceId}")
       .flatMap(fromRawJson)
+  }
+
+  /**
+   * List all invoices, or the invoices for a specific customer.
+   * Sorted by creation date, most recently created first.
+   * https://docs.stripe.com/api/invoices/list
+   *
+   * @param created Only return invoices created during the given date interval
+   * @param status Only return invoices with this status
+   * @param customer Only return invoices for the customer with this ID
+   * @param limit Between 1 and 100. Stripe defaults to 10.
+   */
+  def list(
+      created: Option[DateFilter] = None,
+      status: Option[InvoiceStatus] = None,
+      customer: Option[String] = None,
+      limit: Option[Int] = None
+  ): Seq[Invoice] = {
+    require(
+      limit.forall(x => x >= 1 && x <= 100),
+      s"limit must be between 1 and 100, got ${limit}"
+    )
+
+    val map = Map[String, String]()
+      ++ created.map(_.toParams("created")).getOrElse(Map.empty[String, String])
+      ++ status.map(x => ("status" -> x.value))
+      ++ customer.map(x => ("customer" -> x))
+      ++ limit.map(x => ("limit" -> x.toString))
+
+    val rawResp = Requests
+      .getJson(
+        "/v1/invoices",
+        reqFunc = (
+            x => x.body(map)
+        )
+      )
+
+    rawResp match {
+      case Right(x) =>
+        x.obj("data")
+          .arr
+          .toSeq
+          .map(r =>
+            fromRawJson(r) match {
+              case Right(b) => b
+            }
+          )
+    }
   }
 
   /**
