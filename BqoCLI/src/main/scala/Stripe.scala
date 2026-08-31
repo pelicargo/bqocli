@@ -27,6 +27,14 @@ val stripeParams = CommonParams(
 )
 
 /**
+ * Every Stripe list endpoint caps `limit` at 100, defaulting to 10. Larger
+ * values are rejected, so anything bigger has to be paginated with
+ * `starting_after`.
+ * https://docs.stripe.com/api/pagination
+ */
+val MAX_LIST_LIMIT = 100
+
+/**
  * Making requests to the Stripe API.
  */
 object Requests {
@@ -274,6 +282,98 @@ object Payout {
       .getJson(s"/v1/payouts/${id}")
       .flatMap(fromRawJson)
   }
+
+  /**
+   * Transaction types described by the balance transaction itself, even
+   * though Stripe does give them a source.
+   */
+  private val describedByTransaction =
+    Set("adjustment", "payment_refund", "refund")
+
+  /**
+   * Transaction types that legitimately have no source at all.
+   */
+  private val sourcelessTypes = Set("stripe_fee", "adjustment")
+
+  /**
+   * Render every balance transaction making up a payout as CSV, for import
+   * into accounting software. Stripe's fees are split onto their own rows so
+   * that gross amounts and fees can be booked separately.
+   *
+   * Charges are labelled with their invoice number where there is one, which
+   * costs two extra API calls per charge.
+   */
+  def toCsv(payoutId: String): String = {
+    val rows = BalanceTransaction
+      .listAll(payout = Some(payoutId))
+      .flatMap { txn =>
+        val date = Utils.utcToDate(txn.created)
+        val fee = Utils.intCentsToString(-txn.fee.abs)
+
+        val source: Option[String] =
+          if (describedByTransaction(txn.typ)) None
+          else {
+            require(
+              txn.source.isDefined || sourcelessTypes(txn.typ),
+              s"balance transaction ${txn.id} of type '${txn.typ}' has no " +
+                "source, so there's nothing to describe it with"
+            )
+            txn.source
+          }
+
+        source match {
+          case None =>
+            Seq(
+              Utils.csvRow(
+                txn.description,
+                date,
+                Utils.intCentsToString(txn.amount)
+              ),
+              Utils.csvRow(s"${txn.description} - Fee", date, fee),
+            )
+
+          case Some(payout) if payout.startsWith("po_") =>
+            Seq(
+              Utils.csvRow(
+                s"STRIPE PAYOUT ${date}",
+                date,
+                Utils.intCentsToString(txn.amount)
+              )
+            )
+
+          case Some(chargeId) =>
+            val charge = Charge.retrieve(chargeId) match {
+              case Right(x) => x
+              case Left(err) =>
+                throw new RuntimeException(
+                  s"could not retrieve charge ${chargeId}: ${err}"
+                )
+            }
+            val description = charge.invoice match {
+              case Some(invoiceId) =>
+                val invoice = Invoice.retrieve(invoiceId) match {
+                  case Right(x) => x
+                  case Left(err) =>
+                    throw new RuntimeException(
+                      s"could not retrieve invoice ${invoiceId}: ${err}"
+                    )
+                }
+                s"Invoice ${invoice.number.getOrElse(invoiceId)}"
+              case None => charge.description
+            }
+            Seq(
+              Utils.csvRow(
+                description,
+                date,
+                Utils.intCentsToString(charge.amount)
+              ),
+              Utils.csvRow(s"STRIPE FEES ${date}", date, fee),
+            )
+        }
+      }
+
+    (Utils.csvRow("Desc", "Date", "Amount") +: rows).mkString("\n") + "\n"
+  }
 }
 
 /**
@@ -505,17 +605,28 @@ object BalanceTransaction {
   }
 
   /**
+   * A single page of balance transactions.
    * https://docs.stripe.com/api/balance_transactions/list
+   *
+   * @param limit Between 1 and 100. Stripe defaults to 10.
+   * @param startingAfter Cursor: the id of the last item of the previous page
    */
   def list(
       payout: Option[String] = None,
       typ: Option[String] = None,
-      limit: Option[Int] = None
+      limit: Option[Int] = None,
+      startingAfter: Option[String] = None
   ): Seq[BalanceTransaction] = {
+    require(
+      limit.forall(x => x >= 1 && x <= MAX_LIST_LIMIT),
+      s"limit must be between 1 and ${MAX_LIST_LIMIT}, got ${limit}"
+    )
+
     val map = Map[String, String]()
       ++ payout.map(x => ("payout" -> x))
       ++ typ.map(x => ("type" -> x))
       ++ limit.map(x => ("limit" -> x.toString))
+      ++ startingAfter.map(x => ("starting_after" -> x))
 
     val rawResp = Requests
       .getJson(
@@ -536,6 +647,34 @@ object BalanceTransaction {
             }
           )
     }
+  }
+
+  /**
+   * Every balance transaction matching the filters, paging past Stripe's
+   * 100-per-request cap.
+   */
+  def listAll(
+      payout: Option[String] = None,
+      typ: Option[String] = None
+  ): Seq[BalanceTransaction] = {
+    @annotation.tailrec
+    def go(
+        after: Option[String],
+        acc: Seq[BalanceTransaction]
+    ): Seq[BalanceTransaction] = {
+      val page = list(
+        payout = payout,
+        typ = typ,
+        limit = Some(MAX_LIST_LIMIT),
+        startingAfter = after
+      )
+      val soFar = acc ++ page
+      // A short page means there's nothing after it
+      if (page.size < MAX_LIST_LIMIT) soFar
+      else go(Some(page.last.id), soFar)
+    }
+
+    go(None, Seq.empty)
   }
 }
 
@@ -581,6 +720,18 @@ case class Invoice(
     amount_due: Long,
 )
 
+/**
+ * An invoice flattened into one row, for exporting to a spreadsheet.
+ */
+case class InvoiceSummary(
+    number: String,
+    customerName: String,
+    amount: String,
+    customFields: String,
+) {
+  def toCsv: String = Utils.csvRow(number, customerName, amount, customFields)
+}
+
 object Invoice {
 
   given CommonParams = stripeParams
@@ -620,16 +771,18 @@ object Invoice {
    * @param status Only return invoices with this status
    * @param customer Only return invoices for the customer with this ID
    * @param limit Between 1 and 100. Stripe defaults to 10.
+   * @param startingAfter Cursor: the id of the last item of the previous page
    */
   def list(
       created: Option[DateFilter] = None,
       status: Option[InvoiceStatus] = None,
       customer: Option[String] = None,
-      limit: Option[Int] = None
+      limit: Option[Int] = None,
+      startingAfter: Option[String] = None
   ): Seq[Invoice] = {
     require(
-      limit.forall(x => x >= 1 && x <= 100),
-      s"limit must be between 1 and 100, got ${limit}"
+      limit.forall(x => x >= 1 && x <= MAX_LIST_LIMIT),
+      s"limit must be between 1 and ${MAX_LIST_LIMIT}, got ${limit}"
     )
 
     val map = Map[String, String]()
@@ -637,6 +790,7 @@ object Invoice {
       ++ status.map(x => ("status" -> x.value))
       ++ customer.map(x => ("customer" -> x))
       ++ limit.map(x => ("limit" -> x.toString))
+      ++ startingAfter.map(x => ("starting_after" -> x))
 
     val rawResp = Requests
       .getJson(
@@ -700,6 +854,96 @@ object Invoice {
     )
     rawJson.flatMap(fromRawJson)
   }
+
+  private val isoDatePattern = """\d{4}-\d{2}-\d{2}""".r
+
+  /**
+   * Every invoice created between two `YYYY-MM-DD` dates, inclusive of both
+   * ends, restricted to the given statuses. Defaults to the statuses that
+   * represent real money owed or received, i.e. skipping drafts and voids.
+   *
+   * Sorted most recently created first, matching the Stripe API's own order.
+   */
+  def listCreatedBetween(
+      start: String,
+      end: String,
+      statuses: Seq[InvoiceStatus] = Seq(InvoiceStatus.Open, InvoiceStatus.Paid)
+  ): Seq[Invoice] = {
+    def parseDate(name: String, value: String): java.time.LocalDate = {
+      require(
+        isoDatePattern.matches(value),
+        s"${name} must be YYYY-MM-DD, got '${value}'"
+      )
+      java.time.LocalDate.parse(value)
+    }
+
+    val startDate = parseDate("start", start)
+    val endDate = parseDate("end", end)
+    require(
+      !endDate.isBefore(startDate),
+      s"start ${start} must not be after end ${end}"
+    )
+
+    def utcMidnight(d: java.time.LocalDate): Long =
+      d.atStartOfDay(java.time.ZoneOffset.UTC).toEpochSecond
+
+    // [00:00 UTC on `start`, 00:00 UTC the day after `end`), which includes
+    // everything on both endpoint days
+    val created = DateFilter(
+      gte = Some(utcMidnight(startDate)),
+      lt = Some(utcMidnight(endDate.plusDays(1))),
+    )
+
+    // Stripe's `status` is a single enum rather than a list, so this needs
+    // one pass per status
+    statuses
+      .flatMap { status =>
+        @annotation.tailrec
+        def go(after: Option[String], acc: Seq[Invoice]): Seq[Invoice] = {
+          val page = list(
+            created = Some(created),
+            status = Some(status),
+            limit = Some(MAX_LIST_LIMIT),
+            startingAfter = after
+          )
+          val soFar = acc ++ page
+          // A short page means there's nothing after it
+          if (page.size < MAX_LIST_LIMIT) soFar
+          else go(Some(page.last.id), soFar)
+        }
+
+        go(None, Seq.empty)
+      }
+      .sortBy(-_.created)
+  }
+
+  /**
+   * Invoice numbers, e.g. "FOOBAR-0001", for [[listCreatedBetween]].
+   * Invoices without a number are skipped.
+   */
+  def numbersCreatedBetween(
+      start: String,
+      end: String,
+      statuses: Seq[InvoiceStatus] = Seq(InvoiceStatus.Open, InvoiceStatus.Paid)
+  ): Seq[String] =
+    listCreatedBetween(start, end, statuses).flatMap(_.number)
+
+  /**
+   * Look up an invoice by number and flatten it into a single exportable row.
+   */
+  def summarize(number: String): Either[String, InvoiceSummary] =
+    for {
+      invoice <- searchByNumber(number)
+      customer <- Customer.retrieve(invoice.customer)
+    } yield InvoiceSummary(
+      number = number,
+      customerName = customer.name,
+      amount = Utils.intCentsToString(invoice.total),
+      customFields = invoice.rawJson
+        .flatMap(_.obj.get("custom_fields"))
+        .map(_.toString)
+        .getOrElse(""),
+    )
 
   private val descriptionDateFormat = java.time.format.DateTimeFormatter
     .ofPattern("MMM d, yyyy", java.util.Locale.US)

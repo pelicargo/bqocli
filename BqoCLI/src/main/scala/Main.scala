@@ -34,6 +34,20 @@ object Utils {
     amount
   }
 
+  /**
+   * Quote a single CSV field if it contains anything that would otherwise
+   * break the row (RFC 4180). Embedded quotes are doubled.
+   */
+  def csvEscape(field: String): String =
+    if (field.exists(c => c == ',' || c == '"' || c == '\n' || c == '\r'))
+      "\"" + field.replace("\"", "\"\"") + "\""
+    else field
+
+  /**
+   * Render one CSV row, escaping each field.
+   */
+  def csvRow(fields: String*): String = fields.map(csvEscape).mkString(",")
+
   def utcToDate(ts: Long): String = {
     java.time.LocalDateTime
       .ofEpochSecond(
