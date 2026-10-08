@@ -63,6 +63,9 @@ Invoice.invoicesByCustomerId(91, onlyOpen = true).map(x => (x, Invoice.read(x).r
 // Get last invoice of company.
 Invoice.read(Invoice.invoicesByCustomerId(91, onlyOpen = false).toSeq.sorted.last)
 
+// Read a QuickBooks invoice
+Invoice.readByDocNumber("QB_INVOICE_NAME").right.get
+
 // Mark an invoice as paid on Stripe
 stripe.Invoice.pay(stripe.Invoice.searchByNumber("FOOBAR-0001").right.get.id, true)
 ```
